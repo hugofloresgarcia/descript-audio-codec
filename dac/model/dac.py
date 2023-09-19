@@ -244,7 +244,13 @@ class DAC(BaseModel, CodecMixin):
         z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
             z, n_quantizers
         )
-        return z, codes, latents, commitment_loss, codebook_loss
+        return {
+            "z": z,
+            "codes": codes,
+            "latents": latents,
+            "vq/commitment_loss": commitment_loss,
+            "vq/codebook_loss": codebook_loss
+        }
 
     def decode(self, z: torch.Tensor):
         """Decode given latent codes and return audio data

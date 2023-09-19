@@ -28,6 +28,7 @@ def encode(
     model_type: str = "44khz",
     win_duration: float = 5.0,
     verbose: bool = False,
+    mono: bool = False,
 ):
     """Encode audio files in input path to .dac format.
 
@@ -59,7 +60,6 @@ def encode(
     )
     generator.to(device)
     generator.eval()
-    kwargs = {"n_quantizers": n_quantizers}
 
     # Find all audio files in input path
     input = Path(input)
@@ -69,12 +69,6 @@ def encode(
     output.mkdir(parents=True, exist_ok=True)
 
     for i in tqdm(range(len(audio_files)), desc="Encoding files"):
-        # Load file
-        signal = AudioSignal(audio_files[i])
-
-        # Encode audio to .dac format
-        artifact = generator.compress(signal, win_duration, verbose=verbose, **kwargs)
-
         # Compute output path
         relative_path = audio_files[i].relative_to(input)
         output_dir = output / relative_path.parent
@@ -82,9 +76,30 @@ def encode(
             output_dir = output
             relative_path = audio_files[i]
         output_name = relative_path.with_suffix(".dac").name
+
         output_path = output_dir / output_name
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        if Path(output_path).exists():
+            print(f"Skipping {output_name} (already exists)")
+            continue
+
+        try: 
+            # Load file
+            signal = AudioSignal(audio_files[i])
+        except Exception as e:
+            print(f"failed to load {audio_files[i]}: {e}")
+            print(f"skipping {audio_files[i]}")
+
+        if mono:
+            signal = signal.to_mono()
+
+        # Encode audio to .dac format
+        artifact = generator.compress(
+            signal, win_duration, 
+            verbose=verbose, 
+            n_quantizers=n_quantizers
+        )
         artifact.save(output_path)
 
 
