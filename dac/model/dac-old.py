@@ -7,16 +7,12 @@ import torch
 from audiotools import AudioSignal
 from audiotools.ml import BaseModel
 from torch import nn
-import cached_conv as cc
-from cached_conv import CachedSequential
 
 from .base import CodecMixin
 from dac.nn.layers import Snake1d
-from dac.nn.layers import CausalConv1d, CausalConvTranspose1d, WNConv1d, WNConvTranspose1d
+from dac.nn.layers import WNConv1d
+from dac.nn.layers import WNConvTranspose1d
 from dac.nn.quantize import ResidualVectorQuantize
-
-# CausalConv1d = WNConv1d
-# CausalConvTranspose1d = WNConvTranspose1d
 
 
 def init_weights(m):
@@ -29,14 +25,12 @@ class ResidualUnit(nn.Module):
     def __init__(self, dim: int = 16, dilation: int = 1):
         super().__init__()
         pad = ((7 - 1) * dilation) // 2
-        self.block = CachedSequential(
+        self.block = nn.Sequential(
             Snake1d(dim),
-            CausalConv1d(dim, dim, kernel_size=7, dilation=dilation, padding=pad),
+            WNConv1d(dim, dim, kernel_size=7, dilation=dilation, padding=pad),
             Snake1d(dim),
-            CausalConv1d(dim, dim, kernel_size=1),
+            WNConv1d(dim, dim, kernel_size=1),
         )
-        self.cumulative_delay = self.block.cumulative_delay
-
 
     def forward(self, x):
         y = self.block(x)
@@ -49,12 +43,12 @@ class ResidualUnit(nn.Module):
 class EncoderBlock(nn.Module):
     def __init__(self, dim: int = 16, stride: int = 1):
         super().__init__()
-        self.block = CachedSequential(
+        self.block = nn.Sequential(
             ResidualUnit(dim // 2, dilation=1),
             ResidualUnit(dim // 2, dilation=3),
             ResidualUnit(dim // 2, dilation=9),
             Snake1d(dim // 2),
-            CausalConv1d(
+            WNConv1d(
                 dim // 2,
                 dim,
                 kernel_size=2 * stride,
@@ -62,7 +56,6 @@ class EncoderBlock(nn.Module):
                 padding=math.ceil(stride / 2),
             ),
         )
-        self.cumulative_delay = self.block.cumulative_delay
 
     def forward(self, x):
         return self.block(x)
@@ -77,7 +70,7 @@ class Encoder(nn.Module):
     ):
         super().__init__()
         # Create first convolution
-        self.block = [CausalConv1d(1, d_model, kernel_size=7, padding=3)]
+        self.block = [WNConv1d(1, d_model, kernel_size=7, padding=3)]
 
         # Create EncoderBlocks that double channels as they downsample by `stride`
         for stride in strides:
@@ -87,11 +80,11 @@ class Encoder(nn.Module):
         # Create last convolution
         self.block += [
             Snake1d(d_model),
-            CausalConv1d(d_model, d_latent, kernel_size=3, padding=1),
+            WNConv1d(d_model, d_latent, kernel_size=3, padding=1),
         ]
 
         # Wrap black into nn.Sequential
-        self.block = CachedSequential(*self.block)
+        self.block = nn.Sequential(*self.block)
         self.enc_dim = d_model
 
     def forward(self, x):
@@ -101,9 +94,9 @@ class Encoder(nn.Module):
 class DecoderBlock(nn.Module):
     def __init__(self, input_dim: int = 16, output_dim: int = 8, stride: int = 1):
         super().__init__()
-        self.block = CachedSequential(
+        self.block = nn.Sequential(
             Snake1d(input_dim),
-            CausalConvTranspose1d(
+            WNConvTranspose1d(
                 input_dim,
                 output_dim,
                 kernel_size=2 * stride,
@@ -114,8 +107,6 @@ class DecoderBlock(nn.Module):
             ResidualUnit(output_dim, dilation=3),
             ResidualUnit(output_dim, dilation=9),
         )
-        self.cumulative_delay = self.block.cumulative_delay
-
 
     def forward(self, x):
         return self.block(x)
@@ -132,7 +123,7 @@ class Decoder(nn.Module):
         super().__init__()
 
         # Add first conv layer
-        layers = [CausalConv1d(input_channel, channels, kernel_size=7, padding=3)]
+        layers = [WNConv1d(input_channel, channels, kernel_size=7, padding=3)]
 
         # Add upsampling + MRF blocks
         for i, stride in enumerate(rates):
@@ -143,13 +134,11 @@ class Decoder(nn.Module):
         # Add final conv layer
         layers += [
             Snake1d(output_dim),
-            CausalConv1d(output_dim, d_out, kernel_size=7, padding=3),
+            WNConv1d(output_dim, d_out, kernel_size=7, padding=3),
             nn.Tanh(),
         ]
 
-        self.model = CachedSequential(*layers)
-        self.cumulative_delay = self.model.cumulative_delay
-
+        self.model = nn.Sequential(*layers)
 
     def forward(self, x):
         return self.model(x)
@@ -212,16 +201,8 @@ class DAC(BaseModel, CodecMixin):
         assert sample_rate == self.sample_rate
 
         length = audio_data.shape[-1]
-        # right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
-        # assert right_pad == 0, f"no padding please!"
-        right_cut = length % self.hop_length
-        if right_cut > 0:
-            audio_data = audio_data[..., :-right_cut]
-
-        # if right_pad > 0:
-        #     raise ValueError(
-
-        # audio_data = nn.functional.pad(audio_data, (0, right_pad))
+        right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
+        audio_data = nn.functional.pad(audio_data, (0, right_pad))
 
         return audio_data
 
@@ -263,14 +244,12 @@ class DAC(BaseModel, CodecMixin):
         z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
             z, n_quantizers
         )
-        # return z, codes, latents, commitment_loss, codebook_loss
         return {
             "z": z,
             "codes": codes,
             "latents": latents,
             "vq/commitment_loss": commitment_loss,
-            "vq/codebook_loss": codebook_loss,
-            "length": audio_data.shape
+            "vq/codebook_loss": codebook_loss
         }
 
     def decode(self, z: torch.Tensor):
@@ -332,16 +311,20 @@ class DAC(BaseModel, CodecMixin):
             "audio" : Tensor[B x 1 x length]
                 Decoded audio data.
         """
-        # length = audio_data.shape[-1]
-        # audio_data = self.preprocess(audio_data, sample_rate)
-        out = self.encode(
+        length = audio_data.shape[-1]
+        audio_data = self.preprocess(audio_data, sample_rate)
+        z, codes, latents, commitment_loss, codebook_loss = self.encode(
             audio_data, n_quantizers
         )
 
-        x = self.decode(out["z"])
+        x = self.decode(z)
         return {
-            "audio": x,
-            **out
+            "audio": x[..., :length],
+            "z": z,
+            "codes": codes,
+            "latents": latents,
+            "vq/commitment_loss": commitment_loss,
+            "vq/codebook_loss": codebook_loss,
         }
 
 
@@ -359,18 +342,13 @@ if __name__ == "__main__":
     print(model)
     print("Total # of params: ", sum([np.prod(p.size()) for p in model.parameters()]))
 
-    print(f"{model.encoder.cumulative_delay}")
-    print(f"{model.decoder.cumulative_delay}")
     length = 88200 * 2
     x = torch.randn(1, 1, length).to(model.device)
-
-    x = model.preprocess(x, model.sample_rate)
     x.requires_grad_(True)
     x.retain_grad()
 
     # Make a forward pass
-    out = model(x)
-    out = out["audio"]
+    out = model(x)["audio"]
     print("Input shape:", x.shape)
     print("Output shape:", out.shape)
 

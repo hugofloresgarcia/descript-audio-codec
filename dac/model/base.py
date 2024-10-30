@@ -209,7 +209,8 @@ class CodecMixin:
 
             audio_data = x.audio_data.to(self.device)
             audio_data = self.preprocess(audio_data, self.sample_rate)
-            c = self.encode(audio_data, n_quantizers)['codes']
+            out = self.encode(audio_data, n_quantizers)
+            z, c, latents= out["z"], out["codes"], out["latents"]
             codes.append(c.to(original_device))
             chunk_length = c.shape[-1]
 

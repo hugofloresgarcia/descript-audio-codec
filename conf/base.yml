@@ -2,7 +2,7 @@
 DAC.sample_rate: 44100
 DAC.encoder_dim: 64
 DAC.encoder_rates: [2, 4, 8, 8]
-DAC.decoder_dim: 1536
+DAC.decoder_dim: 1024
 DAC.decoder_rates: [8, 8, 4, 2]
 
 # Quantization
@@ -28,14 +28,13 @@ AdamW.betas: [0.8, 0.99]
 AdamW.lr: 0.0001
 ExponentialLR.gamma: 0.999996
 
-amp: false
-val_batch_size: 100
+amp: true
 device: cuda
 num_iters: 250000
 save_iters: [10000, 50000, 100000, 200000]
-valid_freq: 1000
+valid_freq: 2000
 sample_freq: 10000
-num_workers: 32
+num_workers: 20
 val_idx: [0, 1, 2, 3, 4, 5, 6, 7]
 seed: 0
 lambdas:
@@ -45,7 +44,8 @@ lambdas:
   vq/commitment_loss: 0.25
   vq/codebook_loss: 1.0
 
-VolumeNorm.db: [const, -16]
+# VolumeNorm.db: [const, -16]
+VolumeChange.db: [uniform, -6, 6]
 
 # Transforms
 build_transform.preprocess:
@@ -54,7 +54,7 @@ build_transform.augment_prob: 0.0
 build_transform.augment:
   - Identity
 build_transform.postprocess:
-  - VolumeNorm
+  - VolumeChange
   - RescaleAudio
   - ShiftPhase
 
@@ -85,39 +85,13 @@ AudioLoader.shuffle: true
 AudioDataset.without_replacement: true
 
 train/build_dataset.folders:
-  speech_fb:
-    - /data/daps/train
-  speech_hq:
-    - /data/vctk
-    - /data/vocalset
-    - /data/read_speech
-    - /data/french_speech
-  speech_uq:
-    - /data/emotional_speech/
-    - /data/common_voice/
-    - /data/german_speech/
-    - /data/russian_speech/
-    - /data/spanish_speech/
-  music_hq:
-    - /data/musdb/train
-  music_uq:
-    - /data/jamendo
   general:
-    - /data/audioset/data/unbalanced_train_segments/
-    - /data/audioset/data/balanced_train_segments/
+    - /home/hugo/soundmaterial/data/prosound_training_subset_symlinks
 
 val/build_dataset.folders:
-  speech_hq:
-    - /data/daps/val
-  music_hq:
-    - /data/musdb/test
   general:
-    - /data/audioset/data/eval_segments/
+    - /home/hugo/soundmaterial/data/prosound_training_subset_symlinks
 
 test/build_dataset.folders:
-  speech_hq:
-    - /data/daps/test
-  music_hq:
-    - /data/musdb/test
   general:
-    - /data/audioset/data/eval_segments/
+    - /home/hugo/soundmaterial/data/prosound_training_subset_symlinks

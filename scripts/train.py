@@ -210,6 +210,7 @@ def val_loop(batch, state, accel):
     signal = state.val_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
+    signal.samples = accel.unwrap(state.generator).preprocess(signal.samples, signal.sample_rate)
 
     out = state.generator(signal.audio_data, signal.sample_rate)
     recons = AudioSignal(out["audio"], signal.sample_rate)
@@ -233,6 +234,8 @@ def train_loop(state, batch, accel, lambdas):
         signal = state.train_data.transform(
             batch["signal"].clone(), **batch["transform_args"]
         )
+    
+        signal.samples = accel.unwrap(state.generator).preprocess(signal.samples, signal.sample_rate)
 
     with accel.autocast():
         out = state.generator(signal.audio_data, signal.sample_rate)
@@ -358,7 +361,6 @@ def train(
     sample_freq: int = 10000,
     valid_freq: int = 1000,
     batch_size: int = 12,
-    val_batch_size: int = 10,
     num_workers: int = 8,
     val_idx: list = [0, 1, 2, 3, 4, 5, 6, 7],
     lambdas: dict = {
@@ -377,6 +379,8 @@ def train(
     tracker = Tracker(
         writer=writer, log_file=f"{save_path}/log.txt", rank=accel.local_rank
     )
+
+    val_batch_size = batch_size
 
     state = load(args, accel, tracker, save_path)
     train_dataloader = accel.prepare_dataloader(
