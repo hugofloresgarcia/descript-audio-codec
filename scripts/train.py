@@ -18,6 +18,8 @@ from audiotools.ml.decorators import Tracker
 from audiotools.ml.decorators import when
 from torch.utils.tensorboard import SummaryWriter
 
+import soundmaterial as sm
+
 import dac
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -42,6 +44,7 @@ DAC = argbind.bind(dac.model.DAC)
 Discriminator = argbind.bind(dac.model.Discriminator)
 
 # Data
+Dataset = argbind.bind(sm.dataset.Dataset, "train", "val")
 AudioDataset = argbind.bind(AudioDataset, "train", "val")
 AudioLoader = argbind.bind(AudioLoader, "train", "val")
 
@@ -64,7 +67,7 @@ def get_infinite_loader(dataloader):
             yield batch
 
 
-@argbind.bind("train", "val")
+@argbind.bind
 def build_transform(
     augment_prob: float = 1.0,
     preprocess: list = ["Identity"],
@@ -78,26 +81,42 @@ def build_transform(
     transform = transforms.Compose(preprocess, augment, postprocess)
     return transform
 
-
-@argbind.bind("train", "val", "test")
-def build_dataset(
+@argbind.bind
+def build_datasets(
     sample_rate: int,
-    folders: dict = None,
+    db_path: str = "sm.db", 
+    query: str = "SELECT * from audio_file", 
 ):
     # Give one loader per key/value of dictionary, where
     # value is a list of folders. Create a dataset for each one.
     # Concatenate the datasets with ConcatDataset, which
     # cycles through them.
-    datasets = []
-    for _, v in folders.items():
-        loader = AudioLoader(sources=v)
-        transform = build_transform()
-        dataset = AudioDataset(loader, sample_rate, transform=transform)
-        datasets.append(dataset)
 
-    dataset = ConcatDataset(datasets)
-    dataset.transform = transform
-    return dataset
+    # datasets = []
+    # for _, v in folders.items():
+    #     loader = AudioLoader(sources=v)
+    #     transform = build_transform()
+    #     dataset = AudioDataset(loader, sample_rate, transform=transform)
+    #     datasets.append(dataset)
+    
+    train_tfm = build_transform(augment_prob=1.0)    
+    val_tfm = build_transform(augment_prob=1.0)   
+
+    # dataset = ConcatDataset(datasets)
+    # dataset.transform = transform
+    import pandas as pd
+    conn = sm.connect(db_path)
+    print(f"loading data from {db_path}")
+    df = pd.read_sql(query, conn)
+    tdf, vdf = sm.dataset.train_test_split(df, test_size=0.1, seed=42)
+    train_data = Dataset(
+        tdf, sample_rate=sample_rate, transform=train_tfm
+    )
+    val_data = Dataset(
+        vdf, sample_rate=sample_rate, transform=val_tfm
+    )
+    return train_data, val_data
+
 
 
 @dataclass
@@ -127,12 +146,16 @@ def load(
     accel: ml.Accelerator,
     tracker: Tracker,
     save_path: str,
+    encoder_ckpt: str = None,
     resume: bool = False,
     tag: str = "latest",
-    load_weights: bool = False,
+    load_weights: bool = True,
 ):
     generator, g_extra = None, {}
     discriminator, d_extra = None, {}
+
+    if resume:
+        assert load_weights, "Cannot resume without loading weights. use the --load_weights when launching "
 
     if resume:
         kwargs = {
@@ -149,8 +172,28 @@ def load(
     generator = DAC() if generator is None else generator
     discriminator = Discriminator() if discriminator is None else discriminator
 
+    if encoder_ckpt is not None:
+        pretrained = DAC.load(encoder_ckpt)
+        # do some magic ???
+        # REPLACE THE ENCODER WITH THE PRETRAINED ENCODER!! (AND THE QUANTIZER TOO) 
+
+        # freeze the encoder 
+        generator.encoder.requires_grad_(False)
+        generator.quantizer.requires_grad_(False)
+        # this might work? 
+
     tracker.print(generator)
     tracker.print(discriminator)
+
+    print("GENERATOR")
+    print_model_parameters(generator.encoder)
+    print_model_parameters(generator.decoder)
+    print("DISCRIMINATOR")
+    print_model_parameters(discriminator)
+
+    tracker.print(f"compiling...")
+    generator = torch.compile(generator)
+    tracker.print("finished compiling")
 
     generator = accel.prepare_model(generator)
     discriminator = accel.prepare_model(discriminator)
@@ -175,10 +218,7 @@ def load(
         scheduler_d.load_state_dict(d_extra["scheduler.pth"])
 
     sample_rate = accel.unwrap(generator).sample_rate
-    with argbind.scope(args, "train"):
-        train_data = build_dataset(sample_rate)
-    with argbind.scope(args, "val"):
-        val_data = build_dataset(sample_rate)
+    train_data, val_data = build_datasets(sample_rate)
 
     waveform_loss = losses.L1Loss()
     stft_loss = losses.MultiScaleSTFTLoss()
@@ -350,6 +390,27 @@ def validate(state, val_dataloader, accel):
     return output
 
 
+def print_model_parameters(model):
+    """
+    Prints the number of trainable and non-trainable parameters for each submodule in an nn.Module.
+
+    Args:
+        model (nn.Module): The PyTorch model to analyze.
+    """
+    print(f"Model: {model.__class__.__name__}")
+    print("=" * 40)
+
+    for name, submodule in model.named_children():
+        total_params = sum(p.numel() for p in submodule.parameters())
+        trainable_params = sum(p.numel() for p in submodule.parameters() if p.requires_grad)
+        non_trainable_params = total_params - trainable_params
+
+        print(f"Submodule: {name} ({submodule.__class__.__name__})")
+        print(f"  Total parameters: {total_params:,}")
+        print(f"  Trainable parameters: {trainable_params:,}")
+        print(f"  Non-trainable parameters: {non_trainable_params:,}")
+        print("-" * 40)
+
 @argbind.bind(without_prefix=True)
 def train(
     args,
@@ -383,6 +444,7 @@ def train(
     val_batch_size = batch_size
 
     state = load(args, accel, tracker, save_path)
+
     train_dataloader = accel.prepare_dataloader(
         state.train_data,
         start_idx=state.tracker.step * batch_size,
@@ -413,24 +475,52 @@ def train(
     save_samples = when(lambda: accel.local_rank == 0)(save_samples)
     checkpoint = when(lambda: accel.local_rank == 0)(checkpoint)
 
+    def dataload_time(t0):
+        # print(f"took {time.time() - t0} to load data")
+        return {"time": time.time() - t0}
+
+    dataload_time = tracker.track("data", num_iters, completed=state.tracker.step)(dataload_time)
+    dataload_time = tracker.log("data", "mean")(dataload_time)
+
+    import time
+    t0 = time.time()
+    first_iter = tracker.step
+    print("lets go!!")
     with tracker.live:
         for tracker.step, batch in enumerate(train_dataloader, start=tracker.step):
+            # traclerprint(f"~"*50)
+            # tracker.print(f"step: {tracker.step}")
+            if tracker.step == first_iter:
+                tracker.print("compiling... first step may take a while.")
+            dataload_time(t0)
+            tracker.print("train loop")
             train_loop(state, batch, accel, lambdas)
+            tracker.print("train loop done")
 
             last_iter = (
                 tracker.step == num_iters - 1 if num_iters is not None else False
             )
+            # first_iter = tracker.step == 0
             if tracker.step % sample_freq == 0 or last_iter:
+                tracker.print(f"saving samples..")
                 save_samples(state, val_idx, writer)
+                tracker.print(f"done saving samples..")
 
-            if tracker.step % valid_freq == 0 or last_iter:
+            if (tracker.step % valid_freq == 0 or last_iter) and not first_iter:
+                tracker.print(f"validating..")
                 validate(state, val_dataloader, accel)
+                tracker.print(f"done validating..")
+
+                tracker.print("checkpointing..")
                 checkpoint(state, save_iters, save_path)
+                tracker.print("done checkpointing..")
                 # Reset validation progress bar, print summary since last validation.
                 tracker.done("val", f"Iteration {tracker.step}")
 
             if last_iter:
                 break
+
+            t0 = time.time()
 
 
 if __name__ == "__main__":

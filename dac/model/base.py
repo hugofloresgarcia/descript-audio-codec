@@ -65,9 +65,10 @@ class CodecMixin:
     def padding(self, value):
         assert isinstance(value, bool)
 
-        layers = [
-            l for l in self.modules() if isinstance(l, (nn.Conv1d, nn.ConvTranspose1d))
-        ]
+        layers = []
+        for l in self.modules():
+            if isinstance(l, (nn.Conv1d, nn.ConvTranspose1d)):
+                layers.append(l)
 
         for layer in layers:
             if value:

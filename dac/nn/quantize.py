@@ -1,10 +1,11 @@
-from typing import Union
+from typing import Union, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from einops.layers.torch import Rearrange
 from torch.nn.utils import weight_norm
 
 from dac.nn.layers import WNConv1d
@@ -30,6 +31,8 @@ class VectorQuantize(nn.Module):
         self.in_proj = WNConv1d(input_dim, codebook_dim, kernel_size=1)
         self.out_proj = WNConv1d(codebook_dim, input_dim, kernel_size=1)
         self.codebook = nn.Embedding(codebook_size, codebook_dim)
+
+        self.rearrange_indices = Rearrange("b t -> (b t)")
 
     def forward(self, z):
         """Quantized the input tensor using a fixed codebook and returns
@@ -75,8 +78,10 @@ class VectorQuantize(nn.Module):
     def decode_code(self, embed_id):
         return self.embed_code(embed_id).transpose(1, 2)
 
-    def decode_latents(self, latents):
-        encodings = rearrange(latents, "b d t -> (b t) d")
+    def decode_latents(self, latents: torch.Tensor):
+        # encodings = rearrange(latents, "b d t -> (b t) d")
+        nb, nd, nt = latents.shape
+        encodings = latents.view(-1, nd)
         codebook = self.codebook.weight  # codebook: (N x D)
 
         # L2 normalize encodings and codebook (ViT-VQGAN)
@@ -89,7 +94,8 @@ class VectorQuantize(nn.Module):
             - 2 * encodings @ codebook.t()
             + codebook.pow(2).sum(1, keepdim=True).t()
         )
-        indices = rearrange((-dist).max(1)[1], "(b t) -> b t", b=latents.size(0))
+        # indices = self.rearrange_indices((-dist).max(1)[1], b=latents.size(0)
+        indices = (-dist).max(1)[1].view(nb, nt)
         z_q = self.decode_code(indices)
         return z_q, indices
 
@@ -124,7 +130,17 @@ class ResidualVectorQuantize(nn.Module):
         )
         self.quantizer_dropout = quantizer_dropout
 
-    def forward(self, z, n_quantizers: int = None):
+    @torch.jit.unused
+    def quantizer_drop_train(self, z):
+        n_quantizers = torch.ones((z.shape[0],)) * self.n_codebooks + 1
+        dropout = torch.randint(1, self.n_codebooks + 1, (z.shape[0],))
+        n_dropout = int(z.shape[0] * int(self.quantizer_dropout))
+        n_quantizers[:n_dropout] = dropout[:n_dropout]
+        n_quantizers = n_quantizers.to(z.device)
+
+        return n_quantizers
+
+    def forward(self, z, n_quantizers: Optional[int] = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Quantized the input tensor using a fixed set of `n` codebooks and returns
         the corresponding codebook vectors
         Parameters
@@ -163,16 +179,13 @@ class ResidualVectorQuantize(nn.Module):
 
         if n_quantizers is None:
             n_quantizers = self.n_codebooks
+        
         if self.training:
-            n_quantizers = torch.ones((z.shape[0],)) * self.n_codebooks + 1
-            dropout = torch.randint(1, self.n_codebooks + 1, (z.shape[0],))
-            n_dropout = int(z.shape[0] * self.quantizer_dropout)
-            n_quantizers[:n_dropout] = dropout[:n_dropout]
-            n_quantizers = n_quantizers.to(z.device)
+            n_quantizers = self.quantizer_drop_train(z)
+        else:
+            n_quantizers = self.n_codebooks
 
         for i, quantizer in enumerate(self.quantizers):
-            if self.training is False and i >= n_quantizers:
-                break
 
             z_q_i, commitment_loss_i, codebook_loss_i, indices_i, z_e_i = quantizer(
                 residual
@@ -211,11 +224,11 @@ class ResidualVectorQuantize(nn.Module):
         z_q = 0.0
         z_p = []
         n_codebooks = codes.shape[1]
-        for i in range(n_codebooks):
-            z_p_i = self.quantizers[i].decode_code(codes[:, i, :])
+        for i, quantizer in enumerate(self.quantizers):
+            z_p_i = quantizer.decode_code(codes[:, i, :])
             z_p.append(z_p_i)
 
-            z_q_i = self.quantizers[i].out_proj(z_p_i)
+            z_q_i = quantizer.out_proj(z_p_i)
             z_q = z_q + z_q_i
         return z_q, torch.cat(z_p, dim=1), codes
 

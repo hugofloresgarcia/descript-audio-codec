@@ -6,7 +6,7 @@ __model_version__ = "latest"
 import audiotools
 
 audiotools.ml.BaseModel.INTERN += ["dac.**"]
-audiotools.ml.BaseModel.EXTERN += ["einops", "cached_conv", "cached_conv.convs"]
+audiotools.ml.BaseModel.EXTERN += ["einops", "cached_conv", "cached_conv.convs", "einops.layers.torch"]
 
 
 from . import nn

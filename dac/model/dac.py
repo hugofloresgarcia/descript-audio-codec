@@ -1,6 +1,6 @@
 import math
 from typing import List
-from typing import Union
+from typing import Union, List, Optional
 
 import numpy as np
 import torch
@@ -93,6 +93,7 @@ class Encoder(nn.Module):
         # Wrap black into nn.Sequential
         self.block = CachedSequential(*self.block)
         self.enc_dim = d_model
+        self.cumulative_delay = self.block.cumulative_delay
 
     def forward(self, x):
         return self.block(x)
@@ -158,16 +159,17 @@ class Decoder(nn.Module):
 class DAC(BaseModel, CodecMixin):
     def __init__(
         self,
-        encoder_dim: int = 64,
+        encoder_dim: int = 16,
         encoder_rates: List[int] = [2, 4, 8, 8],
         latent_dim: int = None,
-        decoder_dim: int = 1536,
+        decoder_dim: int = 512,
         decoder_rates: List[int] = [8, 8, 4, 2],
-        n_codebooks: int = 9,
+        n_codebooks: int = 4,
         codebook_size: int = 1024,
         codebook_dim: Union[int, list] = 8,
         quantizer_dropout: bool = False,
         sample_rate: int = 44100,
+        num_channels: int = 1
     ):
         super().__init__()
 
@@ -176,6 +178,8 @@ class DAC(BaseModel, CodecMixin):
         self.decoder_dim = decoder_dim
         self.decoder_rates = decoder_rates
         self.sample_rate = sample_rate
+        self.num_channels = num_channels
+        assert num_channels == 1, "only 1 channel supported for now!"
 
         if latent_dim is None:
             latent_dim = encoder_dim * (2 ** len(encoder_rates))
@@ -217,19 +221,20 @@ class DAC(BaseModel, CodecMixin):
         right_cut = length % self.hop_length
         if right_cut > 0:
             audio_data = audio_data[..., :-right_cut]
+            # print(f"DAC (preprocess): Cutting {right_cut} samples from the right side of the audio data")
 
         # if right_pad > 0:
         #     raise ValueError(
 
-        # audio_data = nn.functional.pad(audio_data, (0, right_pad))
+        # audio_data = nn.functional.pad(audio_data,ta (0, right_pad))
 
         return audio_data
 
     def encode(
         self,
         audio_data: torch.Tensor,
-        n_quantizers: int = None,
-    ):
+        n_quantizers: Optional[int] = None,
+    ) -> dict[str, torch.Tensor]:
         """Encode given audio data and return quantized latent codes
 
         Parameters
@@ -270,7 +275,7 @@ class DAC(BaseModel, CodecMixin):
             "latents": latents,
             "vq/commitment_loss": commitment_loss,
             "vq/codebook_loss": codebook_loss,
-            "length": audio_data.shape
+            "length": torch.tensor(audio_data.shape)
         }
 
     def decode(self, z: torch.Tensor):
@@ -295,9 +300,9 @@ class DAC(BaseModel, CodecMixin):
     def forward(
         self,
         audio_data: torch.Tensor,
-        sample_rate: int = None,
-        n_quantizers: int = None,
-    ):
+        sample_rate: Optional[int] = None,
+        n_quantizers: Optional[int] = None,
+    ) -> dict[str, torch.Tensor]:
         """Model forward pass
 
         Parameters
@@ -341,8 +346,15 @@ class DAC(BaseModel, CodecMixin):
         x = self.decode(out["z"])
         return {
             "audio": x,
-            **out
+            "z": out["z"],
+            "codes": out["codes"],
+            "latents": out["latents"],
+            "vq/commitment_loss": out["vq/commitment_loss"],
+            "vq/codebook_loss": out["vq/codebook_loss"],
+            "length": out["length"],
         }
+
+
 
 
 if __name__ == "__main__":
