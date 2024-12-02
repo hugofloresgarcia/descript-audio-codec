@@ -1,6 +1,6 @@
 import math
 from typing import List
-from typing import Union
+from typing import Union, List, Optional
 
 import numpy as np
 import torch
@@ -201,16 +201,25 @@ class DAC(BaseModel, CodecMixin):
         assert sample_rate == self.sample_rate
 
         length = audio_data.shape[-1]
-        right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
-        audio_data = nn.functional.pad(audio_data, (0, right_pad))
+        # right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
+        # assert right_pad == 0, f"no padding please!"
+        right_cut = length % self.hop_length
+        if right_cut > 0:
+            audio_data = audio_data[..., :-right_cut]
+            print(f"DAC (preprocess): Cutting {right_cut} samples from the right side of the audio data")
+
+        # if right_pad > 0:
+        #     raise ValueError(
+
+        # audio_data = nn.functional.pad(audio_data,ta (0, right_pad))
 
         return audio_data
 
     def encode(
         self,
         audio_data: torch.Tensor,
-        n_quantizers: int = None,
-    ):
+        n_quantizers: Optional[int] = None,
+    ) -> dict[str, torch.Tensor]:
         """Encode given audio data and return quantized latent codes
 
         Parameters
@@ -249,7 +258,8 @@ class DAC(BaseModel, CodecMixin):
             "codes": codes,
             "latents": latents,
             "vq/commitment_loss": commitment_loss,
-            "vq/codebook_loss": codebook_loss
+            "vq/codebook_loss": codebook_loss,
+            "length": torch.tensor(audio_data.shape)
         }
 
     def decode(self, z: torch.Tensor):
@@ -274,9 +284,9 @@ class DAC(BaseModel, CodecMixin):
     def forward(
         self,
         audio_data: torch.Tensor,
-        sample_rate: int = None,
-        n_quantizers: int = None,
-    ):
+        sample_rate: Optional[int] = None,
+        n_quantizers: Optional[int] = None,
+    ) -> dict[str, torch.Tensor]:
         """Model forward pass
 
         Parameters
@@ -311,20 +321,21 @@ class DAC(BaseModel, CodecMixin):
             "audio" : Tensor[B x 1 x length]
                 Decoded audio data.
         """
-        length = audio_data.shape[-1]
-        audio_data = self.preprocess(audio_data, sample_rate)
-        z, codes, latents, commitment_loss, codebook_loss = self.encode(
+        # length = audio_data.shape[-1]
+        # audio_data = self.preprocess(audio_data, sample_rate)
+        out = self.encode(
             audio_data, n_quantizers
         )
 
-        x = self.decode(z)
+        x = self.decode(out["z"])
         return {
-            "audio": x[..., :length],
-            "z": z,
-            "codes": codes,
-            "latents": latents,
-            "vq/commitment_loss": commitment_loss,
-            "vq/codebook_loss": codebook_loss,
+            "audio": x,
+            "z": out["z"],
+            "codes": out["codes"],
+            "latents": out["latents"],
+            "vq/commitment_loss": out["vq/commitment_loss"],
+            "vq/codebook_loss": out["vq/codebook_loss"],
+            "length": out["length"],
         }
 
 
@@ -342,13 +353,18 @@ if __name__ == "__main__":
     print(model)
     print("Total # of params: ", sum([np.prod(p.size()) for p in model.parameters()]))
 
+    print(f"{model.encoder.cumulative_delay}")
+    print(f"{model.decoder.cumulative_delay}")
     length = 88200 * 2
     x = torch.randn(1, 1, length).to(model.device)
+
+    x = model.preprocess(x, model.sample_rate)
     x.requires_grad_(True)
     x.retain_grad()
 
     # Make a forward pass
-    out = model(x)["audio"]
+    out = model(x)
+    out = out["audio"]
     print("Input shape:", x.shape)
     print("Output shape:", out.shape)
 

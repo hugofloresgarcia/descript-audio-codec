@@ -65,9 +65,10 @@ class CodecMixin:
     def padding(self, value):
         assert isinstance(value, bool)
 
-        layers = [
-            l for l in self.modules() if isinstance(l, (nn.Conv1d, nn.ConvTranspose1d))
-        ]
+        layers = []
+        for l in self.modules():
+            if isinstance(l, (nn.Conv1d, nn.ConvTranspose1d)):
+                layers.append(l)
 
         for layer in layers:
             if value:
@@ -209,7 +210,8 @@ class CodecMixin:
 
             audio_data = x.audio_data.to(self.device)
             audio_data = self.preprocess(audio_data, self.sample_rate)
-            c = self.encode(audio_data, n_quantizers)['codes']
+            out = self.encode(audio_data, n_quantizers)
+            z, c, latents= out["z"], out["codes"], out["latents"]
             codes.append(c.to(original_device))
             chunk_length = c.shape[-1]
 

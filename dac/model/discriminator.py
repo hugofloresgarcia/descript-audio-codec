@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from audiotools import AudioSignal
+import audiotools as at
 from audiotools import ml
 from audiotools import STFTParams
 from einops import rearrange
@@ -80,7 +80,7 @@ class MSD(nn.Module):
         self.rate = rate
 
     def forward(self, x):
-        x = AudioSignal(x, self.sample_rate)
+        x = at.AudioSignal(x, self.sample_rate)
         x.resample(self.sample_rate // self.rate)
         x = x.audio_data
 
@@ -147,7 +147,7 @@ class MRD(nn.Module):
         self.conv_post = WNConv2d(ch, 1, (3, 3), (1, 1), padding=(1, 1), act=False)
 
     def spectrogram(self, x):
-        x = AudioSignal(x, self.sample_rate, stft_params=self.stft_params)
+        x = at.AudioSignal(x, self.sample_rate, stft_params=self.stft_params)
         x = torch.view_as_real(x.stft())
         x = rearrange(x, "b 1 f t c -> (b 1) c t f")
         # Split into bands
@@ -198,6 +198,12 @@ class Discriminator(ml.BaseModel):
             Bands to run MRD at, by default `BANDS`
         """
         super().__init__()
+        self.rates = rates
+        self.periods = periods
+        self.fft_sizes = fft_sizes
+        self.sample_rate = sample_rate
+        self.bands = bands
+        
         discs = []
         discs += [MPD(p) for p in periods]
         discs += [MSD(r, sample_rate=sample_rate) for r in rates]

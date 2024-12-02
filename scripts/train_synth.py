@@ -125,14 +125,8 @@ class State:
     optimizer_g: AdamW
     scheduler_g: ExponentialLR
 
-    discriminator: Discriminator
-    optimizer_d: AdamW
-    scheduler_d: ExponentialLR
-
     stft_loss: losses.MultiScaleSTFTLoss
     mel_loss: losses.MelSpectrogramLoss
-    gan_loss: losses.GANLoss
-    waveform_loss: losses.L1Loss
 
     train_data: AudioDataset
     val_data: AudioDataset
@@ -146,12 +140,12 @@ def load(
     accel: ml.Accelerator,
     tracker: Tracker,
     save_path: str,
+    encoder_ckpt: str = None,
     resume: bool = False,
     tag: str = "latest",
     load_weights: bool = True,
 ):
     generator, g_extra = None, {}
-    discriminator, d_extra = None, {}
 
     if resume:
         assert load_weights, "Cannot resume without loading weights. use the --load_weights when launching "
@@ -165,34 +159,30 @@ def load(
         tracker.print(f"Resuming from {str(Path('.').absolute())}/{kwargs['folder']}")
         if (Path(kwargs["folder"]) / "dac").exists():
             generator, g_extra = DAC.load_from_folder(**kwargs)
-        if (Path(kwargs["folder"]) / "discriminator").exists():
-            discriminator, d_extra = Discriminator.load_from_folder(**kwargs)
 
-    generator = DAC() if generator is None else generator
-    discriminator = Discriminator() if discriminator is None else discriminator
+    assert encoder_ckpt is not None
+    if encoder_ckpt is not None:
+        pretrained = DAC.load(encoder_ckpt)
+        generator = dac.model.SynthDAC(pretrained)
+        del generator.encoder.decoder # we don't need the old DAC decoder
+        generator.encoder.requires_grad_(False) # frozen encoder
+        generator.decoder.requires_grad_(True) # unfrozen decoder
 
     tracker.print(generator)
-    tracker.print(discriminator)
 
     print("GENERATOR")
     print_model_parameters(generator.encoder)
     print_model_parameters(generator.decoder)
-    print("DISCRIMINATOR")
-    print_model_parameters(discriminator)
 
-    tracker.print(f"compiling...")
-    generator = torch.compile(generator)
-    tracker.print("finished compiling")
+    # tracker.print(f"compiling...")
+    # generator = torch.compile(generator)
+    # tracker.print("finished compiling")
 
     generator = accel.prepare_model(generator)
-    discriminator = accel.prepare_model(discriminator)
 
     with argbind.scope(args, "generator"):
         optimizer_g = AdamW(generator.parameters(), use_zero=accel.use_ddp)
         scheduler_g = ExponentialLR(optimizer_g)
-    with argbind.scope(args, "discriminator"):
-        optimizer_d = AdamW(discriminator.parameters(), use_zero=accel.use_ddp)
-        scheduler_d = ExponentialLR(optimizer_d)
 
     if "optimizer.pth" in g_extra:
         optimizer_g.load_state_dict(g_extra["optimizer.pth"])
@@ -201,30 +191,18 @@ def load(
     if "tracker.pth" in g_extra:
         tracker.load_state_dict(g_extra["tracker.pth"])
 
-    if "optimizer.pth" in d_extra:
-        optimizer_d.load_state_dict(d_extra["optimizer.pth"])
-    if "scheduler.pth" in d_extra:
-        scheduler_d.load_state_dict(d_extra["scheduler.pth"])
-
     sample_rate = accel.unwrap(generator).sample_rate
     train_data, val_data = build_datasets(sample_rate)
 
-    waveform_loss = losses.L1Loss()
     stft_loss = losses.MultiScaleSTFTLoss()
     mel_loss = losses.MelSpectrogramLoss()
-    gan_loss = losses.GANLoss(discriminator)
 
     return State(
         generator=generator,
         optimizer_g=optimizer_g,
         scheduler_g=scheduler_g,
-        discriminator=discriminator,
-        optimizer_d=optimizer_d,
-        scheduler_d=scheduler_d,
-        waveform_loss=waveform_loss,
         stft_loss=stft_loss,
         mel_loss=mel_loss,
-        gan_loss=gan_loss,
         tracker=tracker,
         train_data=train_data,
         val_data=val_data,
@@ -248,14 +226,13 @@ def val_loop(batch, state, accel):
         "loss": state.mel_loss(recons, signal),
         "mel/loss": state.mel_loss(recons, signal),
         "stft/loss": state.stft_loss(recons, signal),
-        "waveform/loss": state.waveform_loss(recons, signal),
+        # "waveform/loss": state.waveform_loss(recons, signal),
     }
 
 
 @timer()
 def train_loop(state, batch, accel, lambdas):
     state.generator.train()
-    state.discriminator.train()
     output = {}
 
     batch = util.prepare_batch(batch, accel.device)
@@ -263,37 +240,15 @@ def train_loop(state, batch, accel, lambdas):
         signal = state.train_data.transform(
             batch["signal"].clone(), **batch["transform_args"]
         )
-    
         signal.samples = accel.unwrap(state.generator).preprocess(signal.samples, signal.sample_rate)
 
     with accel.autocast():
         out = state.generator(signal.audio_data, signal.sample_rate)
         recons = AudioSignal(out["audio"], signal.sample_rate)
-        commitment_loss = out["vq/commitment_loss"]
-        codebook_loss = out["vq/codebook_loss"]
 
     with accel.autocast():
-        output["adv/disc_loss"] = state.gan_loss.discriminator_loss(recons, signal)
-
-    state.optimizer_d.zero_grad()
-    accel.backward(output["adv/disc_loss"])
-    accel.scaler.unscale_(state.optimizer_d)
-    output["other/grad_norm_d"] = torch.nn.utils.clip_grad_norm_(
-        state.discriminator.parameters(), 10.0
-    )
-    accel.step(state.optimizer_d)
-    state.scheduler_d.step()
-
-    with accel.autocast():
-        output["stft/loss"] = state.stft_loss(recons, signal)
         output["mel/loss"] = state.mel_loss(recons, signal)
-        output["waveform/loss"] = state.waveform_loss(recons, signal)
-        (
-            output["adv/gen_loss"],
-            output["adv/feat_loss"],
-        ) = state.gan_loss.generator_loss(recons, signal)
-        output["vq/commitment_loss"] = commitment_loss
-        output["vq/codebook_loss"] = codebook_loss
+        # output["waveform/loss"] = state.waveform_loss(recons, signal)
         output["loss"] = sum([v * output[k] for k, v in lambdas.items() if k in output])
 
     state.optimizer_g.zero_grad()
@@ -317,9 +272,11 @@ def checkpoint(state, save_iters, save_path):
 
     tags = ["latest"]
     state.tracker.print(f"Saving to {str(Path('.').absolute())}")
+
     if state.tracker.is_best("val", "mel/loss"):
         state.tracker.print(f"Best generator so far")
         tags.append("best")
+
     if state.tracker.step in save_iters:
         tags.append(f"{state.tracker.step // 1000}k")
 
@@ -333,13 +290,6 @@ def checkpoint(state, save_iters, save_path):
         accel.unwrap(state.generator).metadata = metadata
         accel.unwrap(state.generator).save_to_folder(
             f"{save_path}/{tag}", generator_extra
-        )
-        discriminator_extra = {
-            "optimizer.pth": state.optimizer_d.state_dict(),
-            "scheduler.pth": state.scheduler_d.state_dict(),
-        }
-        accel.unwrap(state.discriminator).save_to_folder(
-            f"{save_path}/{tag}", discriminator_extra
         )
 
 
@@ -400,6 +350,7 @@ def print_model_parameters(model):
         print(f"  Non-trainable parameters: {non_trainable_params:,}")
         print("-" * 40)
 
+
 @argbind.bind(without_prefix=True)
 def train(
     args,
@@ -415,10 +366,6 @@ def train(
     val_idx: list = [0, 1, 2, 3, 4, 5, 6, 7],
     lambdas: dict = {
         "mel/loss": 100.0,
-        "adv/feat_loss": 2.0,
-        "adv/gen_loss": 1.0,
-        "vq/commitment_loss": 0.25,
-        "vq/codebook_loss": 1.0,
     },
 ):
     util.seed(seed)
@@ -482,9 +429,7 @@ def train(
             if tracker.step == first_iter:
                 tracker.print("compiling... first step may take a while.")
             dataload_time(t0)
-            tracker.print("train loop")
             train_loop(state, batch, accel, lambdas)
-            tracker.print("train loop done")
 
             last_iter = (
                 tracker.step == num_iters - 1 if num_iters is not None else False

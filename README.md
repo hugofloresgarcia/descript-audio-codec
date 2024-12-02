@@ -21,47 +21,33 @@ neural audio codec, introduced in the paper titled **High-Fidelity Audio Compres
 ## Usage
 
 ### Installation
-```
-pip install descript-audio-codec
-```
-OR
 
+**important note**: you need my (hugo) fork of audiotools to use this fork of DAC. 
 ```
-pip install git+https://github.com/descriptinc/descript-audio-codec
-```
-
-### Weights
-Weights are released as part of this repo under MIT license.
-We release weights for models that can natively support 16 kHz, 24kHz, and 44.1kHz sampling rates.
-Weights are automatically downloaded when you first run `encode` or `decode` command. You can cache them using one of the following commands
-```bash
-python3 -m dac download # downloads the default 44kHz variant
-python3 -m dac download --model_type 44khz # downloads the 44kHz variant
-python3 -m dac download --model_type 24khz # downloads the 24kHz variant
-python3 -m dac download --model_type 16khz # downloads the 16kHz variant
-```
-We provide a Dockerfile that installs all required dependencies for encoding and decoding. The build process caches the default model weights inside the image. This allows the image to be used without an internet connection. [Please refer to instructions below.](#docker-image)
-
-
-### Compress audio
-```
-python3 -m dac encode /path/to/input --output /path/to/output/codes
+git clone https://github.com/hugofloresgarcia/audiotools.git
+cd audiotools
+pip install -e .
 ```
 
-This command will create `.dac` files with the same name as the input files.
-It will also preserve the directory structure relative to input root and
-re-create it in the output directory. Please use `python -m dac encode --help`
-for more options.
-
-### Reconstruct audio from compressed codes
+now, we can install DAC. 
 ```
-python3 -m dac decode /path/to/output/codes --output /path/to/reconstructed_input
+git clone https://github.com/hugofloresgarcia/descript-audio-codec.git
+cd descript-audio-codec
+pip install -e .
 ```
 
-This command will create `.wav` files with the same name as the input files.
-It will also preserve the directory structure relative to input root and
-re-create it in the output directory. Please use `python -m dac decode --help`
-for more options.
+install soundmaterial for dataset processing: 
+```
+git clone https://github.com/hugofloresgarcia/soundmaterial.git
+cd soundmaterial
+pip install -e .
+```
+
+you can create a new database for the dataset by running: 
+```
+python -m soundmaterial.create sm.db
+python -m soundmaterial.add sm.db <PATH_TO_AUDIO>
+```
 
 ### Programmatic Usage
 ```py
@@ -82,7 +68,8 @@ signal = AudioSignal('input.wav')
 signal.to(model.device)
 
 x = model.preprocess(signal.audio_data, signal.sample_rate)
-z, codes, latents, _, _ = model.encode(x)
+out = model.encode(x)
+z = out["z"]
 
 # Decode audio signal
 y = model.decode(z)
@@ -104,33 +91,6 @@ y = model.decompress(x)
 y.write('output.wav')
 ```
 
-### Docker image
-We provide a dockerfile to build a docker image with all the necessary
-dependencies.
-1. Building the image.
-    ```
-    docker build -t dac .
-    ```
-2. Using the image.
-
-    Usage on CPU:
-    ```
-    docker run dac <command>
-    ```
-
-    Usage on GPU:
-    ```
-    docker run --gpus=all dac <command>
-    ```
-
-    `<command>` can be one of the compression and reconstruction commands listed
-    above. For example, if you want to run compression,
-
-    ```
-    docker run --gpus=all dac python3 -m dac encode ...
-    ```
-
-
 ## Training
 The baseline model configuration can be trained using the following commands.
 
@@ -140,7 +100,7 @@ Please install the correct dependencies
 pip install -e ".[dev]"
 ```
 
-## Environment setup
+## Environment setup (if you are using docker)
 
 We have provided a Dockerfile and docker compose setup that makes running experiments easy.
 
@@ -163,16 +123,14 @@ is mounted to `/u/home/src`, which also becomes the working directory.
 Then, run your training command.
 
 
-### Single GPU training
+## Single GPU training
 ```
-export CUDA_VISIBLE_DEVICES=0
-python scripts/train.py --args.load conf/ablations/baseline.yml --save_path runs/baseline/
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --args.load conf/base.yml --save_path runs/base/
 ```
 
-### Multi GPU training
+## Multi GPU training
 ```
-export CUDA_VISIBLE_DEVICES=0,1
-torchrun --nproc_per_node gpu scripts/train.py --args.load conf/ablations/baseline.yml --save_path runs/baseline/
+torchrun --nproc_per_node gpu scripts/train.py --args.load conf/base.yml --save_path runs/base/
 ```
 
 ## Testing

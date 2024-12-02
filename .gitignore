@@ -174,3 +174,9 @@ archived/
 encoded_out/
 recon/
 recons/
+
+
+data-fast
+debug.txt
+*.pt
+sm.db
