@@ -281,6 +281,10 @@ class DDSPDAC(BaseModel):
     def forward(self, x, sample_rate):
         assert sample_rate == self.sample_rate
         latents = self.encoder.encode(x)["z"]
+        # NOTE: the permute here is because the decoder (ddsp)
+        # expects the latents in the shape (seq, batch, features)
+        # instead of the regular shape (batch, features, seq)
+        # which is used throughout this codebase. 
         latents = latents.permute(0, 2, 1) # (now seq, batch, features)
         out =  self.decoder({"latents":latents})
         return {"audio":out['synth_audio'].permute(0,2,1)}
