@@ -243,17 +243,18 @@ class SynthDAC(BaseModel):
         self.sample_rate = self.encoder.sample_rate
         self.block_size = self.encoder.hop_length
 
-        self.hidden = self.encoder.n_codebooks * self.encoder.codebook_dim
+        self.hidden = self.encoder.latent_dim
         
         synth = HNSynth(self.sample_rate, self.block_size)
         decoder = RnnFCDecoder(
             sample_rate=self.sample_rate,
-            input_keys=["dac_codes"], 
+            input_keys=["latents"], 
             input_sizes=[self.hidden], 
             hidden_size=512, 
             output_keys=['amplitude','f0_hz', 'harmonic_distribution','noise_bands'],
             output_sizes=[1,1,100,65],
             num_gru_layers=3, 
+            num_mlp_layers=3
         )
 
         self.decoder = DDSP_Decoder(decoder, synth)
@@ -272,9 +273,9 @@ class SynthDAC(BaseModel):
 
     def forward(self, x, sample_rate):
         assert sample_rate == self.sample_rate
-        dac_codes = self.encoder.encode(x)["latents"]
-        dac_codes = dac_codes.permute(0, 2, 1) # (now seq, batch, features)
-        out =  self.decoder({"dac_codes":dac_codes})
+        latents = self.encoder.encode(x)["z"]
+        latents = latents.permute(0, 2, 1) # (now seq, batch, features)
+        out =  self.decoder({"latents":latents})
         return {"audio":out['synth_audio'].permute(0,2,1)}
 
 if __name__ == "__main__":
@@ -296,7 +297,7 @@ if __name__ == "__main__":
     sig.write('input.wav')
 
     x = dac.preprocess(sig.samples, sig.sample_rate)
-    y = model(x)
+    y = model(x, dac.sample_rate)
 
     recons = dac(x)["audio"]
     reconsig = AudioSignal(recons.detach(), dac.sample_rate)

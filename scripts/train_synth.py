@@ -109,12 +109,14 @@ def build_datasets(
     print(f"loading data from {db_path}")
     df = pd.read_sql(query, conn)
     tdf, vdf = sm.dataset.train_test_split(df, test_size=0.1, seed=42)
-    train_data = Dataset(
-        tdf, sample_rate=sample_rate, transform=train_tfm
-    )
-    val_data = Dataset(
-        vdf, sample_rate=sample_rate, transform=val_tfm
-    )
+    with argbind.scope(args, "train"):
+        train_data = Dataset(
+            tdf, sample_rate=sample_rate, transform=train_tfm
+        )
+    with argbind.scope(args, "val"):
+        val_data = Dataset(
+            vdf, sample_rate=sample_rate, transform=val_tfm
+        )
     return train_data, val_data
 
 

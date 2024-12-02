@@ -36,6 +36,10 @@ cd descript-audio-codec
 pip install -e .
 ```
 
+## training the synth
+
+### (new) soundmaterial datasets
+
 install soundmaterial for dataset processing: 
 ```
 git clone https://github.com/hugofloresgarcia/soundmaterial.git
@@ -43,11 +47,25 @@ cd soundmaterial
 pip install -e .
 ```
 
-you can create a new database for the dataset by running: 
+we'll call our database `sm.db` but you can call it whatever you want. 
+
+you can create a new dataset from a folder of audio files by running: 
 ```
 python -m soundmaterial.create sm.db
 python -m soundmaterial.add sm.db <PATH_TO_AUDIO>
 ```
+
+make sure to update the `conf/synth.yml`
+```
+build_datasets.db_path: sm.db
+build_datasets.query: "SELECT * from audio_file"
+```
+
+### training the synth
+```
+CUDA_VISIBLE_DEVICES=0 python scripts/train_synth.py --args.load conf/synth.yml --save_path runs/synth/v0 --num_workers 8 --batch_size 16
+```
+
 
 ### Programmatic Usage
 ```py
