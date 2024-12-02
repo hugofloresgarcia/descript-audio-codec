@@ -366,3 +366,20 @@ class GANLoss(nn.Module):
             for j in range(len(d_fake[i]) - 1):
                 loss_feature += F.l1_loss(d_fake[i][j], d_real[i][j].detach())
         return loss_g, loss_feature
+
+
+from .clap import MSCLAPWrapper, clip_cosine_loss
+class CLAPLoss(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.clapw = MSCLAPWrapper()
+
+    def forward(self, x: AudioSignal, y: AudioSignal):
+        
+        # extract audio embeddings
+        x_emb = self.clapw.get_audio_embeddings(x)
+        y_emb = self.clapw.get_audio_embeddings(y)
+
+        # compute similarities
+        return clip_cosine_loss(x_emb, y_emb).mean()

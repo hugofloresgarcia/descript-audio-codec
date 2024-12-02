@@ -174,6 +174,7 @@ class RnnFCDecoder(nn.Module):
                  input_sizes=[1,1,16],
                  output_keys=['amplitude','f0', 'harmonic_distribution','noise_bands'],
                  output_sizes=[1,1,100,65], 
+                 num_mlp_layers=3,
                  num_gru_layers=1):
         super().__init__()
         self.input_keys = input_keys
@@ -181,14 +182,14 @@ class RnnFCDecoder(nn.Module):
         n_keys = len(input_keys)
         # Generate MLPs of size: in_size: 1 ; n_layers = 3 (with layer normalization and leaky relu)
         if(n_keys == 1):
-            self.in_mlps = nn.ModuleList([get_mlp(input_sizes[0], hidden_size, 3)])
+            self.in_mlps = nn.ModuleList([get_mlp(input_sizes[0], hidden_size, num_mlp_layers)])
         elif(n_keys == 2):
-            self.in_mlps = nn.ModuleList([get_mlp(input_sizes[0], hidden_size, 3),
-                                          get_mlp(input_sizes[1], hidden_size, 3)])
+            self.in_mlps = nn.ModuleList([get_mlp(input_sizes[0], hidden_size, num_mlp_layers),
+                                          get_mlp(input_sizes[1], hidden_size, num_mlp_layers)])
         elif(n_keys == 3):
-            self.in_mlps = nn.ModuleList([get_mlp(input_sizes[0], hidden_size, 3),
-                                          get_mlp(input_sizes[1], hidden_size, 3),
-                                          get_mlp(input_sizes[2], hidden_size, 3)])
+            self.in_mlps = nn.ModuleList([get_mlp(input_sizes[0], hidden_size, num_mlp_layers),
+                                          get_mlp(input_sizes[1], hidden_size, num_mlp_layers),
+                                          get_mlp(input_sizes[2], hidden_size, num_mlp_layers)])
         else:
             raise ValueError("Expected 2 or 3 input keys. got: {}".format(input_keys))
 
@@ -231,19 +232,6 @@ class RnnFCDecoder(nn.Module):
         return controls
 
 
-def build_hpn_net():
-    # Define the model
-    sample_rate = 16000
-    block_size = 512
-
-    synth = HNSynth(sample_rate, block_size)
-    decoder = RnnFCDecoder(
-        input_keys=['f0_scaled','loudness_scaled'], 
-        input_sizes=[1,1],
-        sample_rate=sample_rate
-    )
-    model = DDSP_Decoder(decoder,synth)
-    return model
 
 from audiotools.ml.layers import BaseModel
 class SynthDAC(BaseModel):

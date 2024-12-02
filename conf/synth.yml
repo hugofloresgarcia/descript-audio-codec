@@ -16,7 +16,8 @@ num_workers: 20
 val_idx: [0, 1, 2, 3, 4, 5, 6, 7]
 seed: 0
 lambdas:
-  mel/loss: 15.0
+  mel/loss: 0.5
+  clap/loss: 20
 
 VolumeNorm.db: [const, -16]
 # VolumeChange.db: [uniform, -6, 6]
@@ -34,17 +35,20 @@ build_transform.postprocess:
 
 # Loss setup
 MultiScaleSTFTLoss.window_lengths: [2048, 512]
-MelSpectrogramLoss.n_mels: [5, 10, 20, 40, 80, 160, 320]
-MelSpectrogramLoss.window_lengths: [32, 64, 128, 256, 512, 1024, 2048]
-MelSpectrogramLoss.mel_fmin: [0, 0, 0, 0, 0, 0, 0]
-MelSpectrogramLoss.mel_fmax: [null, null, null, null, null, null, null]
+# MelSpectrogramLoss.n_mels: [5, 10, 20, 40, 80, 160, 320]
+# MelSpectrogramLoss.window_lengths: [32, 64, 128, 256, 512, 1024, 2048]
+MelSpectrogramLoss.n_mels: [10, 20, 40, 80]
+MelSpectrogramLoss.window_lengths: [512, 1024, 2048]
+MelSpectrogramLoss.mel_fmin: [0, 0, 0, 0]
+MelSpectrogramLoss.mel_fmax: [null, null, null, null]
 MelSpectrogramLoss.pow: 1.0
 MelSpectrogramLoss.clamp_eps: 1.0e-5
 MelSpectrogramLoss.mag_weight: 0.0
 
 # Data
 batch_size: 72
-train/Dataset.n_samples: 32768 # 0.68s
+# train/Dataset.n_samples: 32768 # 0.68s
+train/Dataset.n_samples: 239616 # 0.68s
 val/Dataset.n_samples: 239616 # roughly 5 seconds
 
 build_datasets.db_path: /home/hugo/soundmaterial/clack.db

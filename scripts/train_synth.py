@@ -127,6 +127,7 @@ class State:
 
     stft_loss: losses.MultiScaleSTFTLoss
     mel_loss: losses.MelSpectrogramLoss
+    clap_loss: losses.CLAPLoss
 
     train_data: AudioDataset
     val_data: AudioDataset
@@ -196,6 +197,7 @@ def load(
 
     stft_loss = losses.MultiScaleSTFTLoss()
     mel_loss = losses.MelSpectrogramLoss()
+    clap_loss = losses.CLAPLoss()
 
     return State(
         generator=generator,
@@ -203,6 +205,7 @@ def load(
         scheduler_g=scheduler_g,
         stft_loss=stft_loss,
         mel_loss=mel_loss,
+        clap_loss=clap_loss,
         tracker=tracker,
         train_data=train_data,
         val_data=val_data,
@@ -226,6 +229,7 @@ def val_loop(batch, state, accel):
         "loss": state.mel_loss(recons, signal),
         "mel/loss": state.mel_loss(recons, signal),
         "stft/loss": state.stft_loss(recons, signal),
+        "clap/loss": state.clap_loss(recons, signal),
         # "waveform/loss": state.waveform_loss(recons, signal),
     }
 
@@ -248,6 +252,8 @@ def train_loop(state, batch, accel, lambdas):
 
     with accel.autocast():
         output["mel/loss"] = state.mel_loss(recons, signal)
+        output["clap/loss"] = state.clap_loss(recons, signal)
+        # TODO: add CLAP loss? we'll need to make sure the input signal long enough for the input CLAP window
         # output["waveform/loss"] = state.waveform_loss(recons, signal)
         output["loss"] = sum([v * output[k] for k, v in lambdas.items() if k in output])
 
@@ -365,7 +371,8 @@ def train(
     num_workers: int = 8,
     val_idx: list = [0, 1, 2, 3, 4, 5, 6, 7],
     lambdas: dict = {
-        "mel/loss": 100.0,
+        # "mel/loss": 1.0,
+        "clap/loss": 1.0,
     },
 ):
     util.seed(seed)
