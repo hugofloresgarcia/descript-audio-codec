@@ -52,7 +52,7 @@ we'll call our database `sm.db` but you can call it whatever you want.
 you can create a new dataset from a folder of audio files by running: 
 ```
 python -m soundmaterial.create sm.db
-python -m soundmaterial.add sm.db <PATH_TO_AUDIO>
+python -m soundmaterial.add sm.db <PATH_TO_AUDIO> <DATASET_NAME>
 ```
 
 make sure to update the `conf/synth.yml`
