@@ -166,7 +166,7 @@ def load(
     assert encoder_ckpt is not None
     if encoder_ckpt is not None:
         pretrained = DAC.load(encoder_ckpt)
-        generator = dac.model.SynthDAC(pretrained)
+        generator = dac.model.DDSPDAC(pretrained)
         del generator.encoder.decoder # we don't need the old DAC decoder
         generator.encoder.requires_grad_(False) # frozen encoder
         generator.decoder.requires_grad_(True) # unfrozen decoder

@@ -68,8 +68,15 @@ class HNSynth(nn.Module):
         self.use_cumsum_nd = False
         self.scale_fn = scale_fn
 
-    # expects: harmonic_distribution, amplitude, noise_bands
+    # expects: f0, harmonic_distribution, amplitude, noise_bands
     def forward(self, controls: dict):
+        """
+        the controls dict must have the following keys: 
+        - f0_hz: fundamental frequency in Hz (shape [seq, batch, 1])
+        - harmonic_distribution: harmonic distribution (shape [seq, batch, 100])
+        - amplitude: amplitude (shape [seq, batch, 1])
+        - noise_bands: noise bands (shape [seq, batch, 65])
+        """
 
         harmonics = self.scale_fn(controls['harmonic_distribution'])
         noise_bands = self.scale_fn(controls['noise_bands'])
@@ -234,10 +241,10 @@ class RnnFCDecoder(nn.Module):
 
 
 from audiotools.ml.layers import BaseModel
-class SynthDAC(BaseModel):
+class DDSPDAC(BaseModel):
 
     def __init__(self, encoder: DAC):
-        super(SynthDAC, self).__init__()
+        super(DDSPDAC, self).__init__()
 
         self.encoder = encoder
         self.sample_rate = self.encoder.sample_rate
@@ -287,7 +294,7 @@ if __name__ == "__main__":
     dac.eval()
 
     # load synth from pretrained
-    model = SynthDAC(dac)
+    model = DDSPDAC(dac)
     model.eval()
 
     # load audio
