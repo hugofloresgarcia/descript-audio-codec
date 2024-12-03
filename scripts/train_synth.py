@@ -40,13 +40,10 @@ def ExponentialLR(optimizer, gamma: float = 1.0):
 
 
 # Models
-DAC = argbind.bind(dac.model.DAC)
-Discriminator = argbind.bind(dac.model.Discriminator)
+DDSPDAC = argbind.bind(dac.model.DDSPDAC)
 
 # Data
 Dataset = argbind.bind(sm.dataset.Dataset, "train", "val")
-AudioDataset = argbind.bind(AudioDataset, "train", "val")
-AudioLoader = argbind.bind(AudioLoader, "train", "val")
 
 # Transforms
 filter_fn = lambda fn: hasattr(fn, "transform") and fn.__qualname__ not in [
@@ -123,7 +120,7 @@ def build_datasets(
 
 @dataclass
 class State:
-    generator: DAC
+    generator: DDSPDAC
     optimizer_g: AdamW
     scheduler_g: ExponentialLR
 
@@ -160,16 +157,19 @@ def load(
             "package": not load_weights,
         }
         tracker.print(f"Resuming from {str(Path('.').absolute())}/{kwargs['folder']}")
-        if (Path(kwargs["folder"]) / "dac").exists():
-            generator, g_extra = DAC.load_from_folder(**kwargs)
+        if (Path(kwargs["folder"]) / "ddspdac").exists():
+            pretrained = dac.model.DAC.load(encoder_ckpt)
+            del pretrained.decoder # we don't need the old DAC decoder
+            generator, g_extra = DDSPDAC.load_from_folder(pretrained, folder=kwargs['folder'], package=False, map_location="cpu")
+    else:
+        assert encoder_ckpt is not None
+        if encoder_ckpt is not None:
+            pretrained = dac.model.DAC.load(encoder_ckpt)
+            del pretrained.decoder # we don't need the old DAC decoder
+            generator = DDSPDAC(pretrained)
 
-    assert encoder_ckpt is not None
-    if encoder_ckpt is not None:
-        pretrained = DAC.load(encoder_ckpt)
-        generator = dac.model.DDSPDAC(pretrained)
-        del generator.encoder.decoder # we don't need the old DAC decoder
-        generator.encoder.requires_grad_(False) # frozen encoder
-        generator.decoder.requires_grad_(True) # unfrozen decoder
+    generator.encoder.requires_grad_(False) # frozen encoder
+    generator.decoder.requires_grad_(True) # unfrozen decoder
 
     tracker.print(generator)
 
